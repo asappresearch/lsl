@@ -5,12 +5,12 @@ from tqdm import trange
 from torch.nn.modules.distance import CosineSimilarity
 
 
-def flatten(l):
-    if not isinstance(l, tuple):
-        return (l, )
+def flatten(tgt):
+    if not isinstance(tgt, tuple):
+        return (tgt, )
 
     out = ()
-    for ll in l:
+    for ll in tgt:
         out = out + flatten(ll)
     return out
 
@@ -108,7 +108,7 @@ def tre(reps,
             print(total_loss.item())
         opt.step()
 
-    final_losses = [l.item() for l in loss]
+    final_losses = [loss_t.item() for loss_t in loss]
     if include_pred:
         lexicon = {
             k: obj.emb(torch.LongTensor([v])).data.cpu().numpy()
