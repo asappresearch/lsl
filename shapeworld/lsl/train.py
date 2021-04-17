@@ -582,20 +582,30 @@ if __name__ == "__main__":
                 image_rep = image_model(image)
 
                 if args.e2e_emergent_communications:
-                    # first take examples, embed, encode, average...
                     examples_rep = image_model(examples)
                     examples_rep_mean = torch.mean(examples_rep, dim=1)
-                    # run sender model, ie decode to hypotheses
-                    hint_seq, hint_length = proposal_model.sample(
-                        examples_rep_mean,
-                        sos_index,
-                        eos_index,
-                        pad_index,
-                        greedy=True)
-                    hint_seq = hint_seq.to(device)
-                    hint_length = hint_length.to(device)
-                    # embed the hypothesis
-                    hint_rep = hint_model(hint_seq, hint_length)
+
+                    discrete_prediction = False
+                    if discrete_prediction:
+                        # run sender model, ie decode to hypotheses
+                        hint_seq, hint_length = proposal_model.sample(
+                            examples_rep_mean,
+                            sos_index=0,
+                            eos_index=-1,
+                            pad_index=0,
+                            greedy=True)
+                        hint_seq = hint_seq.to(device)
+                        hint_length = hint_length.to(device)
+                        # embed the hypothesis
+                        hint_rep = hint_model(hint_seq, hint_length)
+                    else:
+                        zerod_seq = torch.zeros_like(hint_seq, device=device)
+                        max_length = torch.zeros_like(hint_length, device=device)
+                        seq_len = hint_seq.size(1)
+                        max_length.fill_(seq_len)
+                        hypo_out = proposal_model(examples_rep_mean, zerod_seq,
+                                                  max_length)
+                        hint_rep = hint_model(hypo_out, hint_length)
                     # compare embedded receiver image with embedded hypothesis
                     score = scorer_model.score(hint_rep, image_rep)
                     # calculate accuracy etc
