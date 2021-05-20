@@ -453,70 +453,72 @@ if __name__ == "__main__":
                 accuracy = accuracy_score(label_np, label_hat)
                 acc_l.append(accuracy)
 
-            else:
-                # Prediction loss
-                if args.infer_hyp:
-                    # Use hypothesis to compute prediction loss
-                    # (how well does true hint match image repr)?
+            # coding up the 'else' of 'if args.e2e_emergent_communications' in a way that minimiizes indentation
+            # changes, so that github diffs don't show much difference
+            # even though this makes the if statements a bit more obtuse
+            # Prediction loss
+            if not args.e2e_emergent_communications and args.infer_hyp:
+                # Use hypothesis to compute prediction loss
+                # (how well does true hint match image repr)?
+                hint_rep = hint_model(hint_seq, hint_length)
+                if args.multimodal_concept:
+                    hint_rep = multimodal_model(hint_rep, examples_rep_mean)
+
+                score = scorer_model.score(hint_rep, image_rep)
+
+                if args.poe:
+                    image_score = scorer_model.score(examples_rep_mean,
+                                                    image_rep)
+                    score = score + image_score
+                pred_loss = F.binary_cross_entropy_with_logits(
+                    score, label.float())
+            elif not args.e2e_emergent_communications:
+                # Use concept to compute prediction loss
+                # (how well does example repr match image repr)?
+                score = scorer_model.score(examples_rep_mean, image_rep)
+                pred_loss = F.binary_cross_entropy_with_logits(
+                    score, label.float())
+
+            # Hypothesis loss
+            if not args.e2e_emergent_communications and args.use_hyp:
+                # How plausible is the true hint under example/image rep?
+                if args.predict_image_hyp:
+                    # Use raw images, flatten out tasks
+                    hyp_batch_size = batch_size * n_ex
+                    hyp_source_rep = examples_rep.view(hyp_batch_size, -1)
+                    hint_seq = hint_seq.unsqueeze(1).repeat(1, n_ex, 1).view(
+                        hyp_batch_size, -1)
+                    hint_length = hint_length.unsqueeze(1).repeat(
+                        1, n_ex).view(hyp_batch_size)
+                else:
+                    hyp_source_rep = examples_rep_mean
+                    hyp_batch_size = batch_size
+
+                if args.predict_hyp and args.predict_hyp_task == 'embed':
+                    # Encode hints, minimize distance between hint and images/examples
                     hint_rep = hint_model(hint_seq, hint_length)
-                    if args.multimodal_concept:
-                        hint_rep = multimodal_model(hint_rep, examples_rep_mean)
-
-                    score = scorer_model.score(hint_rep, image_rep)
-
-                    if args.poe:
-                        image_score = scorer_model.score(examples_rep_mean,
-                                                         image_rep)
-                        score = score + image_score
-                    pred_loss = F.binary_cross_entropy_with_logits(
-                        score, label.float())
+                    dists = torch.norm(hyp_source_rep - hint_rep, p=2, dim=1)
+                    hypo_loss = torch.mean(dists)
                 else:
-                    # Use concept to compute prediction loss
-                    # (how well does example repr match image repr)?
-                    score = scorer_model.score(examples_rep_mean, image_rep)
-                    pred_loss = F.binary_cross_entropy_with_logits(
-                        score, label.float())
+                    # Decode images/examples to hints
+                    hypo_out = proposal_model(hyp_source_rep, hint_seq,
+                                              hint_length)
+                    seq_len = hint_seq.size(1)
+                    hypo_out = hypo_out[:, :-1].contiguous()
+                    hint_seq = hint_seq[:, 1:].contiguous()
 
-                # Hypothesis loss
-                if args.use_hyp:
-                    # How plausible is the true hint under example/image rep?
-                    if args.predict_image_hyp:
-                        # Use raw images, flatten out tasks
-                        hyp_batch_size = batch_size * n_ex
-                        hyp_source_rep = examples_rep.view(hyp_batch_size, -1)
-                        hint_seq = hint_seq.unsqueeze(1).repeat(1, n_ex, 1).view(
-                            hyp_batch_size, -1)
-                        hint_length = hint_length.unsqueeze(1).repeat(
-                            1, n_ex).view(hyp_batch_size)
-                    else:
-                        hyp_source_rep = examples_rep_mean
-                        hyp_batch_size = batch_size
+                    hypo_out_2d = hypo_out.view(hyp_batch_size * (seq_len - 1),
+                                                train_vocab_size)
+                    hint_seq_2d = hint_seq.long().view(hyp_batch_size * (seq_len - 1))
+                    hypo_loss = F.cross_entropy(hypo_out_2d,
+                                                hint_seq_2d,
+                                                reduction='none')
+                    hypo_loss = hypo_loss.view(hyp_batch_size, (seq_len - 1))
+                    hypo_loss = torch.mean(torch.sum(hypo_loss, dim=1))
 
-                    if args.predict_hyp and args.predict_hyp_task == 'embed':
-                        # Encode hints, minimize distance between hint and images/examples
-                        hint_rep = hint_model(hint_seq, hint_length)
-                        dists = torch.norm(hyp_source_rep - hint_rep, p=2, dim=1)
-                        hypo_loss = torch.mean(dists)
-                    else:
-                        # Decode images/examples to hints
-                        hypo_out = proposal_model(hyp_source_rep, hint_seq,
-                                                  hint_length)
-                        seq_len = hint_seq.size(1)
-                        hypo_out = hypo_out[:, :-1].contiguous()
-                        hint_seq = hint_seq[:, 1:].contiguous()
-
-                        hypo_out_2d = hypo_out.view(hyp_batch_size * (seq_len - 1),
-                                                    train_vocab_size)
-                        hint_seq_2d = hint_seq.long().view(hyp_batch_size * (seq_len - 1))
-                        hypo_loss = F.cross_entropy(hypo_out_2d,
-                                                    hint_seq_2d,
-                                                    reduction='none')
-                        hypo_loss = hypo_loss.view(hyp_batch_size, (seq_len - 1))
-                        hypo_loss = torch.mean(torch.sum(hypo_loss, dim=1))
-
-                    loss = args.pred_lambda * pred_loss + args.hypo_lambda * hypo_loss
-                else:
-                    loss = pred_loss
+                loss = args.pred_lambda * pred_loss + args.hypo_lambda * hypo_loss
+            elif not args.e2e_emergent_communications:
+                loss = pred_loss
 
             loss_total += loss.item()
 
