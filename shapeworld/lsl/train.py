@@ -468,7 +468,7 @@ if __name__ == "__main__":
 
                 if args.poe:
                     image_score = scorer_model.score(examples_rep_mean,
-                                                    image_rep)
+                                                     image_rep)
                     score = score + image_score
                 pred_loss = F.binary_cross_entropy_with_logits(
                     score, label.float())
@@ -597,76 +597,78 @@ if __name__ == "__main__":
                     label_hat = label_hat.cpu().numpy()
                     accuracy = accuracy_score(label_np, label_hat)
 
-                else:
-                    if not args.oracle or args.multimodal_concept or args.poe:
-                        # Compute example representation
-                        examples_rep = image_model(examples)
-                        examples_rep_mean = torch.mean(examples_rep, dim=1)
+                # coding up the 'else' of 'if args.e2e_emergent_communications' in a way that minimiizes indentation
+                # changes, so that github diffs don't show much difference
+                # even though this makes the if statements a bit more obtuse
+                if not args.e2e_emergent_communications and (not args.oracle or args.multimodal_concept or args.poe):
+                    # Compute example representation
+                    examples_rep = image_model(examples)
+                    examples_rep_mean = torch.mean(examples_rep, dim=1)
 
-                    if args.poe:
-                        # Compute support image -> query image scores
-                        image_score = scorer_model.score(examples_rep_mean,
-                                                         image_rep)
+                if not args.e2e_emergent_communications and args.poe:
+                    # Compute support image -> query image scores
+                    image_score = scorer_model.score(examples_rep_mean,
+                                                     image_rep)
 
-                    if args.infer_hyp:
-                        # Hypothesize text from examples
-                        # Pick the best caption based on how well it describes concepts
-                        best_predictions = np.zeros(batch_size, dtype=np.uint8)
-                        best_hint_scores = np.full(batch_size,
-                                                   -np.inf,
-                                                   dtype=np.float32)
+                if not args.e2e_emergent_communications and args.infer_hyp:
+                    # Hypothesize text from examples
+                    # Pick the best caption based on how well it describes concepts
+                    best_predictions = np.zeros(batch_size, dtype=np.uint8)
+                    best_hint_scores = np.full(batch_size,
+                                               -np.inf,
+                                               dtype=np.float32)
 
-                        for j in range(args.n_infer):
-                            # Decode greedily for first hyp; otherwise sample
-                            # If --oracle, hint_seq/hint_length is given
-                            if not args.oracle:
-                                hint_seq, hint_length = proposal_model.sample(
-                                    examples_rep_mean,
-                                    sos_index,
-                                    eos_index,
-                                    pad_index,
-                                    greedy=j == 0)
-                            hint_seq = hint_seq.to(device)
-                            hint_length = hint_length.to(device)
-                            hint_rep = hint_model(hint_seq, hint_length)
+                    for j in range(args.n_infer):
+                        # Decode greedily for first hyp; otherwise sample
+                        # If --oracle, hint_seq/hint_length is given
+                        if not args.oracle:
+                            hint_seq, hint_length = proposal_model.sample(
+                                examples_rep_mean,
+                                sos_index,
+                                eos_index,
+                                pad_index,
+                                greedy=j == 0)
+                        hint_seq = hint_seq.to(device)
+                        hint_length = hint_length.to(device)
+                        hint_rep = hint_model(hint_seq, hint_length)
 
-                            # Compute how well this hint describes the 4 concepts.
-                            if not args.oracle:
-                                hint_scores = scorer_model.batchwise_score(
-                                    hint_rep, examples_rep)
-                                hint_scores = hint_scores.cpu().numpy()
+                        # Compute how well this hint describes the 4 concepts.
+                        if not args.oracle:
+                            hint_scores = scorer_model.batchwise_score(
+                                hint_rep, examples_rep)
+                            hint_scores = hint_scores.cpu().numpy()
 
-                            # Compute prediction for this hint
-                            if args.multimodal_concept:
-                                hint_rep = multimodal_model(
-                                    hint_rep, examples_rep_mean)
-                            score = scorer_model.score(hint_rep, image_rep)
+                        # Compute prediction for this hint
+                        if args.multimodal_concept:
+                            hint_rep = multimodal_model(
+                                hint_rep, examples_rep_mean)
+                        score = scorer_model.score(hint_rep, image_rep)
 
-                            if args.poe:
-                                # Average with image score
-                                score = score + image_score
-                            label_hat = score > 0
-                            label_hat = label_hat.cpu().numpy()
-
-                            # Update scores and predictions for best running hints
-                            if not args.oracle:
-                                updates = hint_scores > best_hint_scores
-                                best_hint_scores = np.where(
-                                    updates, hint_scores, best_hint_scores)
-                                best_predictions = np.where(
-                                    updates, label_hat, best_predictions)
-                            else:
-                                best_predictions = label_hat
-
-                        accuracy = accuracy_score(label_np, best_predictions)
-                    else:
-                        # Compare image directly to example rep
-                        score = scorer_model.score(examples_rep_mean, image_rep)
-
+                        if args.poe:
+                            # Average with image score
+                            score = score + image_score
                         label_hat = score > 0
                         label_hat = label_hat.cpu().numpy()
 
-                        accuracy = accuracy_score(label_np, label_hat)
+                        # Update scores and predictions for best running hints
+                        if not args.oracle:
+                            updates = hint_scores > best_hint_scores
+                            best_hint_scores = np.where(
+                                updates, hint_scores, best_hint_scores)
+                            best_predictions = np.where(
+                                updates, label_hat, best_predictions)
+                        else:
+                            best_predictions = label_hat
+
+                    accuracy = accuracy_score(label_np, best_predictions)
+                elif not args.e2e_emergent_communications:
+                    # Compare image directly to example rep
+                    score = scorer_model.score(examples_rep_mean, image_rep)
+
+                    label_hat = score > 0
+                    label_hat = label_hat.cpu().numpy()
+
+                    accuracy = accuracy_score(label_np, label_hat)
                 accuracy_meter.update(accuracy,
                                       batch_size,
                                       raw_scores=(label_hat == label_np))
