@@ -18,13 +18,13 @@ from utils import (
     AverageMeter,
     save_defaultdict_to_fs,
 )
-from datasets import ShapeWorld, extract_features
-from datasets import SOS_TOKEN, EOS_TOKEN, PAD_TOKEN
+from .datasets import ShapeWorld, extract_features
+from .datasets import SOS_TOKEN, EOS_TOKEN, PAD_TOKEN
 from models import ImageRep, TextRep, TextProposal, ExWrapper
 from models import MultimodalRep
 from models import DotPScorer, BilinearScorer
-from vision import Conv4NP, ResNet18
-from tre import AddComp, MulComp, CosDist, L1Dist, L2Dist, tre
+from .vision import Conv4NP, ResNet18
+from .tre import AddComp, MulComp, CosDist, L1Dist, L2Dist, tre
 
 TRE_COMP_FNS = {
     'add': AddComp,
@@ -108,6 +108,8 @@ if __name__ == "__main__":
                         type=int,
                         default=10,
                         help='Number of hypotheses to infer')
+    parser.add_argument('--no-augment', action='store_true', help='do not augment train dataset')
+    parser.add_argument('--soft-test', action='store_true', help='do not use discrete sampling at test')
     parser.add_argument(
         '--oracle',
         action='store_true',
@@ -236,7 +238,7 @@ if __name__ == "__main__":
     train_dataset = ShapeWorld(
         split='train',
         vocab=None,
-        augment=True,
+        augment=not args.no_augment,
         precomputed_features=precomputed_features,
         max_size=args.max_train,
         preprocess=preprocess,
@@ -400,11 +402,11 @@ if __name__ == "__main__":
 
         loss_total = 0
         pbar = tqdm(total=n_steps)
+        acc_l = []
         for batch_idx in range(n_steps):
             examples, image, label, hint_seq, hint_length, *rest = \
                 train_dataset.sample_train(args.batch_size)
-            # print('examples.size()', examples.size(), 'image.size()', image.size(), 'label.size()', label.size(),
-            #       'hint_seq.size()', hint_seq.size(), 'hint_length.size()', hint_length.size())
+            label_np = label.cpu().numpy().astype(np.uint8)
 
             examples = examples.to(device)
             image = image.to(device)
@@ -420,14 +422,11 @@ if __name__ == "__main__":
                 # Cap max length if it doesn't fill out the tensor
                 if max_hint_length != hint_seq.shape[1]:
                     hint_seq = hint_seq[:, :max_hint_length]
-                # print('loading hint')
 
             # Learn representations of images and examples
             image_rep = image_model(image)
             examples_rep = image_model(examples)
             examples_rep_mean = torch.mean(examples_rep, dim=1)
-            # print('image_rep.size()', image_rep.size())
-            # print('examples_rep_mean.size()', examples_rep_mean.size())
 
             if args.e2e_emergent_communications:
                 # end to end differentiable loss, via linguistic bottleneck
@@ -440,57 +439,48 @@ if __name__ == "__main__":
                 max_length.fill_(seq_len)
                 hypo_out = proposal_model(examples_rep_mean, zerod_seq,
                                           max_length)
-                # print('hypo_out.size()', hypo_out.size())
 
                 # next, use the receiver model
                 hint_rep = hint_model(hypo_out, hint_length)
-                # print('hint_rep.size()', hint_rep.size())
 
                 score = scorer_model.score(hint_rep, image_rep)
 
-                # print('calculate pred_loss from score and label')
                 loss = F.binary_cross_entropy_with_logits(
                     score, label.float())
+
+                label_hat = score > 0
+                label_hat = label_hat.cpu().numpy()
+                accuracy = accuracy_score(label_np, label_hat)
+                acc_l.append(accuracy)
+
             else:
                 # Prediction loss
                 if args.infer_hyp:
-                    # print('infer_hyp')
                     # Use hypothesis to compute prediction loss
                     # (how well does true hint match image repr)?
                     hint_rep = hint_model(hint_seq, hint_length)
-                    # print('hint_rep.size()', hint_rep.size())
                     if args.multimodal_concept:
-                        # print('multimodal_concept')
                         hint_rep = multimodal_model(hint_rep, examples_rep_mean)
 
-                    # print('scoring between hint_rep', hint_rep.size(), ' and image_rep', image_rep.size())
                     score = scorer_model.score(hint_rep, image_rep)
 
                     if args.poe:
-                        # print('poe')
-                        # print('scoring between examples_rep_mean and image_rep')
                         image_score = scorer_model.score(examples_rep_mean,
                                                          image_rep)
-                        # print('image_score.size()', image_score.size())
                         score = score + image_score
-                    # print('calculate pred_loss from score and label')
                     pred_loss = F.binary_cross_entropy_with_logits(
                         score, label.float())
                 else:
-                    # print('no infer_hyp')
                     # Use concept to compute prediction loss
                     # (how well does example repr match image repr)?
                     score = scorer_model.score(examples_rep_mean, image_rep)
-                    # print('calculate pred_loss from score and label')
                     pred_loss = F.binary_cross_entropy_with_logits(
                         score, label.float())
 
                 # Hypothesis loss
                 if args.use_hyp:
-                    # print('use_hyp')
                     # How plausible is the true hint under example/image rep?
                     if args.predict_image_hyp:
-                        # print('predict_image_hyp')
                         # Use raw images, flatten out tasks
                         hyp_batch_size = batch_size * n_ex
                         hyp_source_rep = examples_rep.view(hyp_batch_size, -1)
@@ -499,27 +489,18 @@ if __name__ == "__main__":
                         hint_length = hint_length.unsqueeze(1).repeat(
                             1, n_ex).view(hyp_batch_size)
                     else:
-                        # print('no predict_image_hyp')
-                        # print('hyp_source_rep = examples_rep_mean')
                         hyp_source_rep = examples_rep_mean
                         hyp_batch_size = batch_size
 
                     if args.predict_hyp and args.predict_hyp_task == 'embed':
                         # Encode hints, minimize distance between hint and images/examples
-                        # print('using hint_model to get hint_rep from hint_seq and hint_length')
                         hint_rep = hint_model(hint_seq, hint_length)
-                        # print('hint_rep.size()', hint_rep.size())
-                        # print('calculating distances between hyp_source_rep and hint_rep')
                         dists = torch.norm(hyp_source_rep - hint_rep, p=2, dim=1)
-                        # print('dists.size()', dists.size())
-                        # print('calculate hypo_loss as mean of dists')
                         hypo_loss = torch.mean(dists)
                     else:
                         # Decode images/examples to hints
-                        # print('use proposal_model to get hypo_out from hyp_source_rep and hint_seq')
                         hypo_out = proposal_model(hyp_source_rep, hint_seq,
                                                   hint_length)
-                        # print('hypo_out.size()', hypo_out.size())
                         seq_len = hint_seq.size(1)
                         hypo_out = hypo_out[:, :-1].contiguous()
                         hint_seq = hint_seq[:, 1:].contiguous()
@@ -527,17 +508,14 @@ if __name__ == "__main__":
                         hypo_out_2d = hypo_out.view(hyp_batch_size * (seq_len - 1),
                                                     train_vocab_size)
                         hint_seq_2d = hint_seq.long().view(hyp_batch_size * (seq_len - 1))
-                        # print('calculate hypo_loss from hypo_out_2d and hint_seq_2d')
                         hypo_loss = F.cross_entropy(hypo_out_2d,
                                                     hint_seq_2d,
                                                     reduction='none')
                         hypo_loss = hypo_loss.view(hyp_batch_size, (seq_len - 1))
-                        # print('calculate hypo_loss as mean of hypo_loss')
                         hypo_loss = torch.mean(torch.sum(hypo_loss, dim=1))
 
                     loss = args.pred_lambda * pred_loss + args.hypo_lambda * hypo_loss
                 else:
-                    # print('loss = pred_loss')
                     loss = pred_loss
 
             loss_total += loss.item()
@@ -547,14 +525,15 @@ if __name__ == "__main__":
             optimizer.step()
 
             if batch_idx % args.log_interval == 0:
-                pbar.set_description('Epoch {} Loss: {:.6f}'.format(
-                    epoch, loss.item()))
+                acc_avg = sum(acc_l) / len(acc_l)
+                pbar.set_description(f'Epoch {epoch} Loss: {loss.item():.6f} acc={acc_avg:.3f}')
                 pbar.refresh()
 
             pbar.update()
         pbar.close()
         print('====> {:>12}\tEpoch: {:>3}\tLoss: {:.4f}'.format(
             '(train)', epoch, loss_total))
+        print('mean accuracy during training %.3f' % (sum(acc_l) / len(acc_l)))
 
         return loss_total
 
@@ -573,6 +552,7 @@ if __name__ == "__main__":
 
         with torch.no_grad():
             for examples, image, label, hint_seq, hint_length, *rest in data_loader:
+
                 examples = examples.to(device)
                 image = image.to(device)
                 label = label.to(device)
@@ -585,7 +565,7 @@ if __name__ == "__main__":
                     examples_rep = image_model(examples)
                     examples_rep_mean = torch.mean(examples_rep, dim=1)
 
-                    discrete_prediction = False
+                    discrete_prediction = not args.soft_test
                     if discrete_prediction:
                         # run sender model, ie decode to hypotheses
                         hint_seq, hint_length = proposal_model.sample(
@@ -606,12 +586,15 @@ if __name__ == "__main__":
                         hypo_out = proposal_model(examples_rep_mean, zerod_seq,
                                                   max_length)
                         hint_rep = hint_model(hypo_out, hint_length)
+
                     # compare embedded receiver image with embedded hypothesis
                     score = scorer_model.score(hint_rep, image_rep)
+
                     # calculate accuracy etc
                     label_hat = score > 0
                     label_hat = label_hat.cpu().numpy()
                     accuracy = accuracy_score(label_np, label_hat)
+
                 else:
                     if not args.oracle or args.multimodal_concept or args.poe:
                         # Compute example representation
