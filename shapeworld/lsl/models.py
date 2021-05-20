@@ -82,6 +82,7 @@ class TextRep(nn.Module):
         vocab_size, embedding_size = embedding_module.weight.size()
         print('vocab_size', vocab_size, 'embedding_size', embedding_size)
         self.soft_embedding = nn.Linear(vocab_size, embedding_size, bias=False)
+        # share weights across the nn.Embedding and the nn.Linear
         self.soft_embedding.weight.data = self.discr_embedding.weight.data.transpose(0, 1)
         self.embedding_dim = embedding_module.embedding_dim
         self.gru = nn.GRU(self.embedding_dim, 512)
