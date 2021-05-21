@@ -18,13 +18,13 @@ from utils import (
     AverageMeter,
     save_defaultdict_to_fs,
 )
-from .datasets import ShapeWorld, extract_features
-from .datasets import SOS_TOKEN, EOS_TOKEN, PAD_TOKEN
+from datasets import ShapeWorld, extract_features
+from datasets import SOS_TOKEN, EOS_TOKEN, PAD_TOKEN
 from models import ImageRep, TextRep, TextProposal, ExWrapper
 from models import MultimodalRep
 from models import DotPScorer, BilinearScorer
-from .vision import Conv4NP, ResNet18
-from .tre import AddComp, MulComp, CosDist, L1Dist, L2Dist, tre
+from vision import Conv4NP, ResNet18
+from tre import AddComp, MulComp, CosDist, L1Dist, L2Dist, tre
 
 TRE_COMP_FNS = {
     'add': AddComp,
