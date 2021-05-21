@@ -97,7 +97,7 @@ if __name__ == "__main__":
         help='Product of experts: support lang -> query img '
              'x support img -> query img'
     )
-    parser.add_argument('--e2e-emergent-communications',
+    parser.add_argument('--e2e_emergent_communications',
                         action='store_true',
                         help='use an emergent communications bottleneck, no supervised training')
     parser.add_argument('--predict_hyp_task',
@@ -108,8 +108,8 @@ if __name__ == "__main__":
                         type=int,
                         default=10,
                         help='Number of hypotheses to infer')
-    parser.add_argument('--no-augment', action='store_true', help='do not augment train dataset')
-    parser.add_argument('--soft-test', action='store_true', help='do not use discrete sampling at test')
+    parser.add_argument('--no_augment', action='store_true', help='do not augment train dataset')
+    parser.add_argument('--soft_test', action='store_true', help='do not use discrete sampling at test')
     parser.add_argument(
         '--oracle',
         action='store_true',
